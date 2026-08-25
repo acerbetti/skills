@@ -331,7 +331,8 @@ def _images_state(edit_id, lang, image_type):
 def _replace_images(edit_id, lang, image_type, files):
     # Multi-image set with append semantics: delete existing, then upload the new ones.
     # Every mutation needs the current If-Match ETag, and the ETag changes after each
-    # write, so re-read it before each call.
+    # write — including writes to OTHER image types on the same listing. Re-fetch
+    # immediately before each operation to avoid 412 Precondition Failed.
     base = f"/edits/{edit_id}/listings/{lang}/{image_type}"
     etag, existing = _images_state(edit_id, lang, image_type)
     for img in existing:
@@ -340,9 +341,9 @@ def _replace_images(edit_id, lang, image_type, files):
             _api("DELETE", f"{base}/{img_id}", etag=etag)
             etag, _ = _images_state(edit_id, lang, image_type)
     for f in files:
+        etag, _ = _images_state(edit_id, lang, image_type)  # always re-fetch before upload
         with open(f, "rb") as fh:
             _api("POST", f"{base}/upload", raw=fh.read(), content_type="image/png", etag=etag)
-        etag, _ = _images_state(edit_id, lang, image_type)
 
 def push_screenshots(edit_id, only_locale):
     print("── Screenshots (replace) ──")
@@ -357,14 +358,16 @@ def push_screenshots(edit_id, only_locale):
             print(f"  [{lang}] {image_type}: {len(files)} from {sdir}/")
 
 def push_assets(edit_id):
-    print(f"── Listing artwork ({DEFAULT_LANG}) ──")
-    for image_type, rel in ASSETS:
-        path = os.path.join(META_DIR, rel)
-        if not os.path.exists(path):
-            print(f"  {image_type}: missing {rel} — skip")
-            continue
-        _replace_images(edit_id, DEFAULT_LANG, image_type, [path])
-        print(f"  ✓ {image_type} ← {os.path.basename(rel)}")
+    # Amazon requires icons and Fire TV artwork for EVERY locale listing, not just the
+    # default language. The same files are uploaded to each locale (they are language-agnostic).
+    print("── Listing artwork (all locales) ──")
+    for lang, _, _ in LOCALES:
+        for image_type, rel in ASSETS:
+            path = os.path.join(META_DIR, rel)
+            if not os.path.exists(path):
+                continue
+            _replace_images(edit_id, lang, image_type, [path])
+            print(f"  [{lang}] ✓ {image_type} ← {os.path.basename(rel)}")
 
 def _videos_state(edit_id, lang):
     """Return (etag, [video dicts]) for a listing's video set (GET body is {'videos': [...]})."""
@@ -421,10 +424,10 @@ def preview(cmd, only_locale):
                 if n:
                     print(f"  [{lang}] {image_type}: {n} from {sdir}/")
     if cmd in ("assets", "all") and not only_locale:
-        print(f"── Artwork ({DEFAULT_LANG}) ──")
+        print("── Artwork (all locales) ──")
         for image_type, rel in ASSETS:
             ok = "✓" if os.path.exists(os.path.join(META_DIR, rel)) else "missing"
-            print(f"  {image_type} ← {rel}  [{ok}]")
+            print(f"  {image_type} ← {rel} → {len(LOCALES)} locales  [{ok}]")
     if cmd in ("video", "all"):
         print("── Promo video ──")
         n = len([l for l, _, _ in LOCALES if not only_locale or l == only_locale])
