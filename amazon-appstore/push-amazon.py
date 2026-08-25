@@ -23,11 +23,14 @@ Usage:
   python3 push-amazon.py video [locale] [--stage|--commit]              # promo video → every locale (captionless)
   python3 push-amazon.py assets [--stage|--commit]                      # icons + Fire TV artwork
 
-  Add --amend to any --stage command to use the EXISTING open edit rather than creating a new one.
-  This is useful when you want to add more assets to an already-staged upcoming version without
-  discarding it first:
-    python3 push-amazon.py screenshots --stage --amend   # add tablet shots to existing open edit
-    python3 push-amazon.py video --stage --amend         # add promo video to existing open edit
+  Add --amend to --stage to use the EXISTING open edit rather than creating a new one.
+  Useful for adding assets to an already-staged upcoming version:
+    python3 push-amazon.py screenshots --stage --amend   # add shots to existing open edit
+    python3 push-amazon.py video --stage --amend         # add video to existing open edit
+    python3 push-amazon.py all --stage --amend           # top up everything in existing edit
+
+  --amend can also be combined with --commit to submit an already-open edit for review:
+    python3 push-amazon.py video --commit --amend        # add video then submit immediately
 
 Scope: store listing only. The APK/AAB is owned by CI (Fire TV publish job).
 
@@ -260,7 +263,13 @@ def _screenshot_files(sdir: str, pattern: str) -> list:
 
 def _active_edit():
     """Return (editId, etag) of the current active edit, or (None, None)."""
-    _, headers, body = _api("GET", "/edits")
+    try:
+        _, headers, body = _api("GET", "/edits")
+    except SystemExit as e:
+        # 404 means no active edit — treat as (None, None) rather than crashing.
+        if "404" in str(e):
+            return None, None
+        raise
     if body and body.get("id"):
         return body["id"], headers.get("ETag")
     return None, None
@@ -459,8 +468,8 @@ def main():
     args = [a for a in args if a not in ("--commit", "--stage", "--amend")]
     if do_commit and do_stage:
         sys.exit("Choose one of --stage or --commit, not both.")
-    if do_amend and not do_stage:
-        sys.exit("--amend only makes sense with --stage.")
+    if do_amend and not (do_stage or do_commit):
+        sys.exit("--amend requires --stage or --commit.")
 
     cmd = args[0]
     if cmd not in ("text", "screenshots", "assets", "video", "all", "listing"):

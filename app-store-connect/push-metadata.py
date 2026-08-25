@@ -3,13 +3,15 @@
 push-metadata.py — Push App Store Connect metadata from local MD files.
 
 Usage:
-  python3 push-metadata.py --check                    # verify auth before pushing
-  python3 push-metadata.py ios [locale]               # platform text + shared app info
-  python3 push-metadata.py tvos [locale] --screenshots # + screenshots
-  python3 push-metadata.py all                        # all platforms + locales
-  python3 push-metadata.py appinfo [locale]           # shared subtitle + privacy only
-  python3 push-metadata.py screenshots tvos [locale]  # screenshots only (replace)
-  python3 push-metadata.py screenshots all            # screenshots, all platforms
+  python3 push-metadata.py --check                              # verify auth before pushing
+  python3 push-metadata.py create-version <platform|all> <ver> # open a new version (e.g. 3.2.0)
+  python3 push-metadata.py ios [locale]                         # platform text + shared app info
+  python3 push-metadata.py tvos [locale] --screenshots          # + screenshots
+  python3 push-metadata.py all                                  # all platforms + locales
+  python3 push-metadata.py appinfo [locale]                     # shared subtitle + privacy only
+  python3 push-metadata.py screenshots tvos [locale]            # screenshots only (replace)
+  python3 push-metadata.py screenshots all                      # screenshots, all platforms
+  python3 push-metadata.py previews <platform|all> [locale]     # app-preview videos (replace)
 
 Per-platform fields (description, keywords, promotional text, what's new) come from
 each platform section. Subtitle + privacy policy are app-wide in App Store Connect
@@ -207,19 +209,54 @@ def _delete(path: str) -> None:
 # App Store Connect resource helpers
 # ---------------------------------------------------------------------------
 
+# Version states where per-version fields (description, keywords, screenshots,
+# previews) can still be edited. WAITING_FOR_REVIEW is editable — metadata can
+# be revised while the version is in review (verified live). Only
+# PENDING_DEVELOPER_RELEASE (approved, awaiting release) and READY_FOR_SALE
+# (live) are truly locked for per-version content.
+_EDITABLE_VERSION_STATES = {
+    "PREPARE_FOR_SUBMISSION",
+    "WAITING_FOR_REVIEW",
+    "DEVELOPER_REJECTED",
+    "REJECTED",
+    "METADATA_REJECTED",
+    "READY_FOR_REVIEW",
+}
+
 def _get_editable_version(app_id: str, platform: str) -> str:
-    """Return the version ID that is currently open for editing."""
+    """Return the most recent version ID that is open for editing."""
     data = _get(f"/apps/{app_id}/appStoreVersions", {
         "filter[platform]": platform,
-        "filter[appStoreState]": "PREPARE_FOR_SUBMISSION",
+        "limit": "10",
     })
-    versions = data.get("data", [])
-    if not versions:
-        raise RuntimeError(
-            f"No PREPARE_FOR_SUBMISSION version for app {app_id} / {platform}. "
-            "Create a new version in App Store Connect first."
-        )
-    return versions[0]["id"]
+    for v in data.get("data", []):
+        if v["attributes"].get("appStoreState") in _EDITABLE_VERSION_STATES:
+            return v["id"]
+    raise RuntimeError(
+        f"No editable version for {platform}. "
+        "Run `create-version <platform> <version>` to open a new one. "
+        "A version in PENDING_DEVELOPER_RELEASE or READY_FOR_SALE cannot be edited."
+    )
+
+def create_version(platform_key: str, version_string: str) -> str:
+    """Create a new PREPARE_FOR_SUBMISSION version and return its ID."""
+    platform, _ = PLATFORM_CFG[platform_key]
+    app_id = os.environ["ASC_APP_ID"]
+    resp = _post("/appStoreVersions", {
+        "data": {
+            "type": "appStoreVersions",
+            "attributes": {
+                "platform": platform,
+                "versionString": version_string,
+            },
+            "relationships": {
+                "app": {"data": {"type": "apps", "id": app_id}}
+            },
+        }
+    })
+    vid = resp["data"]["id"]
+    print(f"  ✓ {platform_key.upper()} {version_string} created (id={vid})")
+    return vid
 
 def _get_version_localizations(version_id: str) -> dict:
     """Return {asc_locale: localization_id} for a version."""
@@ -599,8 +636,9 @@ def sync_previews(platform_key: str, locale_filter: str | None) -> None:
         asc_locale = LOCALE_MAP[locale]
         loc_id = version_locs.get(asc_locale)
         if not loc_id:
-            print(f"  [{asc_locale}] no version localization — skip")
-            continue
+            loc_id = _create_version_localization(version_id, asc_locale)
+            version_locs[asc_locale] = loc_id
+            print(f"  [{asc_locale}] + created version localization")
         for preview_type, filename in cfg:
             path = os.path.join(VIDEO_DIR, filename)
             if not os.path.exists(path):
@@ -742,6 +780,23 @@ def main():
 
     if args[0] == "--check":
         check_auth()
+        return
+
+    if args[0] == "create-version":
+        if len(args) < 3:
+            print("Usage: create-version <platform|all> <version-string>  e.g. create-version all 3.2.0")
+            sys.exit(1)
+        platform_arg  = args[1].lower()
+        version_string = args[2]
+        platforms = list(PLATFORM_CFG.keys()) if platform_arg == "all" else [platform_arg]
+        for p in platforms:
+            if p not in PLATFORM_CFG:
+                print(f"Unknown platform '{p}'. Use: ios, macos, tvos, all")
+                sys.exit(1)
+        print(f"=== Creating version {version_string} ===")
+        for p in platforms:
+            create_version(p, version_string)
+        print("\nDone. Run `previews all` or `all` to push content to the new version.")
         return
 
     # `screenshots <platform> [locale]` — replace screenshots only.

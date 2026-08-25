@@ -204,7 +204,7 @@ def check():
         edit = svc.edits().insert(packageName=PACKAGE, body={}).execute(num_retries=5)
         eid = edit["id"]
     except HttpError as e:
-        print(f"  ✗ edits.insert failed: {e.status_code} {e.reason}")
+        print(f"  ✗ edits.insert failed: {e.resp.status} {e.error_details}")
         print("    The service account needs 'Edit store listing, pricing & distribution'")
         print("    granted for this app in Play Console → Users and permissions.")
         sys.exit(1)
@@ -275,7 +275,7 @@ def main():
             svc.edits().delete(packageName=PACKAGE, editId=edit_id).execute(num_retries=5)
         except Exception:
             pass
-        print(f"\n✗ API error: {getattr(e,'status_code','?')} {getattr(e,'reason','')}\n{e}")
+        print(f"\n✗ API error: {e.resp.status} {e.error_details}\n{e}")
         sys.exit(1)
 
 if __name__ == "__main__":
