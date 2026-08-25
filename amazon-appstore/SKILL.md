@@ -134,10 +134,12 @@ video has no captions, so one file serves all languages:
 `VIDEO_DIR`/`VIDEO_FILE`). Uploaded as `video/mp4`; the returned object is just an
 `id` (no thumbnail required). Verified live.
 
-**Artwork** (default language `en-US`, single-image replace):
+**Artwork** (uploaded to **every locale** — same files for each, language-agnostic):
 `large-icons` ← `assets/icon-512.png`, `small-icons` ← `assets/icon-114.png`,
 `firetv-backgrounds` ← `assets/fire-tv-background-1920x1080.png`,
 `firetv-icons` ← `assets/fire-tv-banner-1280x720.png` (the Fire TV store tile).
+Amazon requires icons and Fire TV artwork on each locale listing independently — they
+do not inherit from `en-US`.
 
 *Not pushed:* the APK (CI), and category/website/privacy/price (Console-managed).
 
@@ -191,12 +193,21 @@ five empty localized listings.
    (icons/backgrounds) are handled by delete-then-upload.
 7. **Token expires hourly** → the script auto-refreshes on a 403 and retries.
 8. **Transient 5xx/429** are retried with exponential backoff (image uploads especially).
-9. **Verified live (2026-08-23), except commit.** Auth, the edit lifecycle, listing
-   text PUTs (all fields incl. the arrays), screenshot upload/replace, asset replace,
-   and every image-type slug were exercised against the real API via throwaway edits
-   that were then discarded. Only `POST /edits/{id}/commit` is untested — because
-   committing submits for review. Live en-US is already populated; the 5 localized
-   listings are empty and are what a push fills.
+9. **DRM cannot be set via the API — set it to Yes in the Console.** Amazon's
+   `appstore/v1` API has no endpoint for Binary File Options (DRM). `PUT /apks/{id}`,
+   `PUT /apks/{id}/targeting`, and `PUT /edits/{id}` all return `400 Unable to fetch
+   the request scope` for DRM fields. Targeting PUT silently ignores unknown fields.
+   The commit fails with `error_apk_drm_value_missing` for any APK uploaded via API.
+   **Workaround**: CI uploads the APK and leaves the edit open; the release manager
+   opens the Amazon Developer Console → open edit → Binary File Options → **set DRM
+   to Yes** (the `amazon` flavor includes `com.amazon.device:amazon-appstore-sdk`,
+   so the APK is DRM-capable) → Submit. The SDK is zero-config — no initialization
+   code needed; it self-registers via a ContentProvider merged from its manifest.
+10. **Verified live (2026-08-25), except commit.** Auth, the edit lifecycle, listing
+    text PUTs (all fields incl. the arrays), screenshot upload/replace, asset replace,
+    and every image-type slug were exercised. The commit path requires the Console step
+    above for DRM. Live en-US was already populated; the 5 localized listings are filled
+    by this skill.
 
 ---
 
