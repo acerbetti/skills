@@ -516,8 +516,11 @@ def main():
         else:
             print(f"\n✓ STAGED — nothing submitted. This edit is your upcoming version.")
             print(f"  Edit id: {edit_id}")
-            print("  Review it in the Amazon Developer Console (the app's open edit / "
-                  "upcoming version), then Submit there. Discard there to abandon.")
+            print("  Review it in the Amazon Developer Console (the app's open edit /")
+            print("  upcoming version), then Submit there. Discard there to abandon.")
+            print("\n  ⚠️  Console-only manual steps (API has no endpoint for these):")
+            print("     1. Binary File Options → set DRM to Yes (required for API-uploaded APKs)")
+            print("     2. App Information → Language Support → check: de, es, fr, it, ja")
     except SystemExit:
         if not do_amend:   # only discard if WE opened the edit
             _discard_edit(edit_id)
