@@ -141,7 +141,7 @@ video has no captions, so one file serves all languages:
 Amazon requires icons and Fire TV artwork on each locale listing independently — they
 do not inherit from `en-US`.
 
-*Not pushed:* the APK (CI), and category/website/privacy/price (Console-managed).
+*Not pushed:* the APK (CI), and category/website/privacy/price/language-support (Console-managed).
 
 ---
 
@@ -208,6 +208,13 @@ five empty localized listings.
     and every image-type slug were exercised. The commit path requires the Console step
     above for DRM. Live en-US was already populated; the 5 localized listings are filled
     by this skill.
+11. **Language Support cannot be set via the API — set it manually in the Console.**
+    `PUT /edits/{id}/details` silently ignores any unknown fields (e.g. `supportedLanguages`,
+    `languages`); there is no `/languages` or `/locales` sub-resource in v1. The Language
+    Support checkboxes (de, es, fr, it, ja in addition to en) must be set manually:
+    Console → open edit → **App Information → Language Support** → check all languages
+    the app UI supports. This is separate from the store listing languages which this
+    skill pushes. Amazon does **not** auto-derive this from the APK's `localeConfig`.
 
 ---
 
