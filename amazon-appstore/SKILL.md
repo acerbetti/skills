@@ -208,6 +208,18 @@ five empty localized listings.
     and every image-type slug were exercised. The commit path requires the Console step
     above for DRM. Live en-US was already populated; the 5 localized listings are filled
     by this skill.
+12. **"Reduced Device Support" warning = unselected device targeting, not the manifest.**
+    An APK uploaded via the API auto-targets almost nothing (Amazon selected 2 of 134
+    devices in practice), so the Console warns that device support dropped vs the
+    previous (manually-submitted) version. It is NOT caused by the manifest, the
+    Amazon SDK, or DRM — byte-diffing two APKs confirmed identical native libs and an
+    identical (actually more-permissive) manifest. **Fix:** `GET
+    /edits/{id}/apks/{apkId}/targeting` → `{amazonDevices:[{id,name,status,reason}]}`;
+    flip every device with `status=NOT_TARGETING` and an empty `reason` to `TARGETING`,
+    then `PUT` it back with the **per-APK targeting ETag** (from that GET — a distinct
+    ETag from the apk/listing/edit ones). Leave `DISABLED` devices alone (they carry a
+    real reason, e.g. `minSdkVersion=26` excluding Fire OS 5/6). This is owned by CI
+    (the APK uploader), automated in `android-native.yml`'s publish-amazon step.
 11. **Language Support cannot be set via the API — set it manually in the Console.**
     `PUT /edits/{id}/details` silently ignores any unknown fields (e.g. `supportedLanguages`,
     `languages`); there is no `/languages` or `/locales` sub-resource in v1. The Language
