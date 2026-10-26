@@ -77,3 +77,11 @@ No secrets are stored in this repo. Each skill reads credentials from environmen
 | App Store Connect | `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_PRIVATE_KEY_PATH`, `ASC_APP_ID` | `~/.secrets/AuthKey_<KEYID>.p8` |
 | Google Play | `PLAY_SERVICE_ACCOUNT_JSON` | `~/.secrets/play-service-account.json` |
 | Amazon Appstore | `AMAZON_CLIENT_ID`, `AMAZON_CLIENT_SECRET`, `AMAZON_APP_ID` | — |
+
+## Workflow skills
+
+General-purpose development skills, not tied to a single store.
+
+- `code-hygiene/`: end-of-day review of the day's changes for regressions, best-practice violations, and dead code.
+- `plan-review-loop/`: iterative adversarial review of a plan file with Codex, fixing blockers until the plan passes. Requires the Codex plugin.
+- `seo-audit/`: SEO audit for websites, covering technical SEO, on-page SEO, and content quality.
