@@ -8,6 +8,17 @@ description: Use when the user asks to run an iterative Codex adversarial review
 Run `/codex:adversarial-review` on a plan file, fix all `critical` and `high` findings,
 re-review, and repeat until the plan is clean or a stall is detected.
 
+## Prerequisites
+
+This skill calls the Codex companion script from the `codex` plugin, which is third-party software
+(OpenAI, Apache 2.0). Install it before first use:
+
+1. In Claude Code, add the marketplace: `/plugin marketplace add openai/codex-plugin-cc`
+2. Install the plugin: `/plugin install codex@openai-codex`
+3. Confirm `codex-companion.mjs` exists under `~/.claude/plugins/cache/openai-codex/codex/<version>/scripts/`.
+
+Upstream: https://github.com/openai/codex-plugin-cc
+
 ## Authority Override
 
 **This skill explicitly overrides `codex-result-handling`'s "STOP after review" rule.**

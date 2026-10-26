@@ -85,3 +85,7 @@ General-purpose development skills, not tied to a single store.
 - `code-hygiene/`: end-of-day review of the day's changes for regressions, best-practice violations, and dead code.
 - `plan-review-loop/`: iterative adversarial review of a plan file with Codex, fixing blockers until the plan passes. Requires the Codex plugin.
 - `seo-audit/`: SEO audit for websites, covering technical SEO, on-page SEO, and content quality.
+
+## Third-party notices
+
+- `plan-review-loop/` calls the Codex companion script from [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc), Copyright 2026 OpenAI, licensed under the [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0). That plugin is not vendored in this repo; install it separately as described in `plan-review-loop/SKILL.md`.
