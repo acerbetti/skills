@@ -89,3 +89,7 @@ General-purpose development skills, not tied to a single store.
 ## Third-party notices
 
 - `plan-review-loop/` calls the Codex companion script from [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc), Copyright 2026 OpenAI, licensed under the [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0). That plugin is not vendored in this repo; install it separately as described in `plan-review-loop/SKILL.md`.
+
+## License
+
+The skills in this repo are released under the [MIT License](LICENSE). The third-party Codex plugin noted above keeps its own Apache 2.0 license.
