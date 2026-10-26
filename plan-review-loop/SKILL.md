@@ -80,7 +80,8 @@ digraph plan_review_loop {
 2. Run the review via Bash (NOT the Skill tool — `adversarial-review` has `disable-model-invocation: true`
    and cannot be invoked through the Skill tool):
    ```bash
-   node "/Users/ace/.claude/plugins/cache/openai-codex/codex/1.0.4/scripts/codex-companion.mjs" \
+   CODEX_COMPANION=$(ls -d "$HOME"/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs | sort -V | tail -1)
+   node "$CODEX_COMPANION" \
      adversarial-review "--wait focus: <plan-file-path>"
    ```
    Replace `<plan-file-path>` with the actual relative path to the plan file.
