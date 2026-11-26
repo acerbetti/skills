@@ -4,6 +4,10 @@ Claude Code skills for publishing mobile apps to the three major app stores.
 
 Each skill is a self-contained directory with a Python script, a thin shell wrapper, and a `SKILL.md` that Claude loads when the skill is invoked.
 
+**Locales are discovered from your project, not hardcoded.** Every skill reads the
+metadata files and screenshot folders it finds on disk, then maps each language to the
+store's own code. Adding a language means adding a file — no code change in any skill.
+
 ## Skills
 
 ### `app-store-connect/`
@@ -13,10 +17,10 @@ Pushes metadata and assets to **Apple App Store Connect** (iOS, macOS, tvOS) via
 - Localized text: description, keywords, promotional text, what's new, subtitle, privacy policy
 - Localized screenshots (per-locale captioned PNGs)
 - App preview videos (locale-agnostic; same file per device to every locale)
-- Covers all 7 locales and all 3 Apple platforms under a single App ID
+- Any number of locales, across all 3 Apple platforms under a single App ID
 
 **Auth:** JWT signed with an App Store Connect API key (`.p8`).  
-**Deps:** venv with `PyJWT`, `requests`, `cryptography`.
+**Deps:** venv with `PyJWT`, `requests`, `cryptography` (Python 3.10+).
 
 ### `google-play/`
 
@@ -38,7 +42,7 @@ Pushes the store listing to the **Amazon Appstore** via the App Store Submission
 - Fire TV screenshots and Fire Tablet screenshots (Cast captures auto-excluded)
 - Icons, Fire TV background and banner artwork
 - Promo video (locale-agnostic; same file to every locale)
-- Covers 6 locales (en-US, de-DE, fr-FR, es-ES, it-IT, ja-JP)
+- Any number of locales (Amazon offers a per-app language set)
 
 **Auth:** LWA `client_credentials` → bearer token.  
 **Deps:** none — pure Python stdlib.
@@ -67,6 +71,33 @@ source .env.asc
 ```
 
 All three scripts are **dry-run by default** (or local-preview-only for Amazon). Pass `--commit` to write to the store. Amazon also supports `--stage` to leave an edit open for manual review in the Developer Console, and `--amend` to add assets to an already-open edit.
+
+## Languages
+
+Every skill discovers its languages from your project. There is no hardcoded locale
+list to edit when you add one.
+
+Each skill looks for:
+
+- `store-listings/<store>/metadata.md` — the primary language (`en-US`)
+- `store-listings/<store>/i18n/<locale>.md` — one file per additional language
+- `android-native/screenshots/captioned/<locale>/` (Play, Amazon) or
+  `apple-native/screenshots/captioned/<locale>/` (Apple) — screenshots per language
+
+The `<locale>` in the file name is the **local code** (`en`, `it`, `ja`, `zh-Hans`).
+Each skill maps that to the store's own language code (`en-US`, `it-IT`, `ja-JP`,
+`zh-CN`) using the store's live language list where it can, with a static fallback
+for the common cases. If a language isn't recognised, the store rejects it with a
+clear error rather than the skill silently skipping it.
+
+So adding a language is three steps and no code change:
+
+1. Write the metadata file (`i18n/nl.md`).
+2. Capture the screenshots into the locale folder.
+3. Push.
+
+Each skill's `--check` prints the languages it discovered, so you can confirm
+before pushing.
 
 ## Credentials
 

@@ -1,6 +1,6 @@
 ---
 name: amazon-appstore
-description: Use when pushing Amazon Appstore listing metadata (title, descriptions, feature bullets, keywords, release notes) or Fire TV / phone screenshots + artwork to the Amazon Developer Console for Clocks in Motion. Triggers on "push amazon metadata", "update Amazon Appstore listing", "upload Fire TV screenshots", "Amazon App Submission API".
+description: Use when pushing Amazon Appstore listing metadata (title, descriptions, feature bullets, keywords, release notes) or Fire TV / phone screenshots + artwork to the Amazon Developer Console for any app. Triggers on "push amazon metadata", "update Amazon Appstore listing", "upload Fire TV screenshots", "Amazon App Submission API".
 ---
 
 # Amazon Appstore — Store Listing Push
@@ -16,6 +16,10 @@ artwork) via the **Amazon App Submission API**.
 
 **No venv / deps** — the Amazon API is plain REST + a bearer token, so this runs on
 system `python3` (unlike the sister `google-play` and `app-store-connect` skills).
+
+**The locale set is discovered from the project, not hardcoded.** Add a language by
+adding `i18n/<locale>.md` and a screenshot folder — no code change needed. See
+"Locale mapping" below.
 
 **Scope boundary:** store listing only. The APK/AAB is owned by CI (the Fire TV
 publish job). This script never uploads a binary or touches targeting/availability.
@@ -145,24 +149,64 @@ do not inherit from `en-US`.
 
 ---
 
-## Locale mapping (`LOCALES`)
+## Locale mapping (discovered from disk, not hardcoded)
 
-| Amazon listing | Metadata file | Screenshot dir |
+The locale set is **discovered from the project's files**, so adding a language
+needs no code change. Three naming schemes meet here:
+
+| | What it is | Example |
 |---|---|---|
-| en-US | `metadata.md` | `en` |
-| de-DE | `i18n/de.md` | `de` |
-| fr-FR | `i18n/fr.md` | `fr` |
-| es-ES | `i18n/es-ES.md` | `es-ES` |
-| it-IT | `i18n/it.md` | `it` |
-| ja-JP | `i18n/ja.md` | `ja` |
+| **Amazon listing language** | what the API wants | `en-US`, `it-IT` |
+| **Metadata file** | `store-listings/amazon-appstore/i18n/<local>.md` | `i18n/it.md` |
+| **Screenshot dir** | `android-native/screenshots/captioned/<local>/` | `captioned/it/` |
 
-**No Simplified Chinese.** Verified live: Amazon does not offer Chinese as an
-available listing language for this app — every code tried (`zh-Hans`, `zh-CN`,
-`zh`, `cmn-Hans`, `zh-Hans-CN`) returns `400 Invalid language`, and `ko-KR` is
-likewise unavailable, while `de-DE/fr-FR/es-ES/it-IT/ja-JP` (and `pt-BR`) return
-`200`. So the repo's `i18n/zh-Hans.md` has no Amazon target and is omitted from
-`LOCALES`. As of the live probe only **en-US was populated**; this skill fills the
-five empty localized listings.
+Discovery reads the metadata files and the screenshot folders, then maps each
+local code to an Amazon language. The mapping comes from the app's existing
+listing languages when credentials are available, with a small static fallback
+for the common cases:
+
+| local | Amazon | note |
+|---|---|---|
+| en | en-US | the primary locale; its file is `metadata.md` |
+| it | it-IT | |
+| ja | ja-JP | |
+| de, fr, es-ES | de-DE, fr-FR, es-ES | same code, region added |
+
+Anything else follows the same pattern: the local code is looked up in the app's
+listing languages, and its region-qualified identifier is used (`nl` → `nl-NL`,
+`sv` → `sv-SE`). If a local code isn't in Amazon's list, the code is used as-is
+and Amazon rejects it with a clear error.
+
+Amazon has no "list all languages" endpoint, so the skill probes the candidate
+languages against an open edit when one exists. Opening an edit is a server
+write, so with no open edit the skill uses its static aliases instead and lets
+Amazon's `400 Invalid language` be the authority when a language is pushed.
+
+### Adding a language
+
+No code change needed. For locale `nl`:
+
+1. Write `store-listings/amazon-appstore/i18n/nl.md` with `### Title`,
+   `### Short description`, `### Long description`, `### Product features`,
+   `### Search keywords` and `### Release notes` sections.
+2. Add screenshots in `android-native/screenshots/captioned/nl/`, named to match
+   the configured globs (`tv_*.png`, `tablet_*.png`).
+3. Run the push. The script discovers `nl` from disk and pushes it.
+
+The locale argument accepts both forms — `it-IT` (the Amazon language) or `it`
+(the local code). Unknown locales are rejected, not silently ignored.
+
+### Amazon's available languages are per-app
+
+Amazon does not offer every language to every app, and the set can change.
+Verified live against the Clock in Motion app: `en-US/de-DE/fr-FR/es-ES/it-IT/ja-JP`
+(and `pt-BR`) return `200`, while Simplified Chinese (`zh-Hans`, `zh-CN`, `zh`,
+`cmn-Hans`, `zh-Hans-CN`) and `ko-KR` return `400 Invalid language`. So that
+project's `i18n/zh-Hans.md` has no Amazon target.
+
+If a language comes back as `400 Invalid language`, that's Amazon's answer — the
+file is fine, the app just isn't offered that language. Leave it out of the push
+rather than working around it.
 
 ---
 

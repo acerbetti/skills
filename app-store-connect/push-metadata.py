@@ -51,7 +51,59 @@ META_DIR = os.environ.get(
     os.path.join(os.getcwd(), "store-listings", "apple-app-store"),
 )
 
-# Locale codes used in our MD files → App Store Connect locale identifiers
+# Locale codes used in our MD files → App Store Connect locale identifiers.
+#
+# This map is DISCOVERED, not hardcoded: the locale set comes from whatever the
+# project actually has (metadata files + screenshot folders), so adding a new
+# language needs no change here. See _discover_locales() below.
+#
+# ASC locale identifiers that differ from the file/folder name:
+#   "en" (file metadata.md) → "en-US"
+#   "it" (not "it-IT") — ASC rejects it-IT.
+#   "de"/"fr" → "de-DE"/"fr-FR" — ASC uses region-qualified codes for these.
+# Everything else uses the same code in both places.
+_ASC_ALIASES = {
+    "en": "en-US",
+    "it": "it",
+    "de": "de-DE",
+    "fr": "fr-FR",
+}
+
+# Local locale → ASC locale, for locales ASC spells differently from the
+# file/folder name. This is the full set of exceptions; everything else maps
+# to itself. Read from ASC's own locale list when available (see
+# _asc_locale_for), which is why a new language never needs editing here.
+_ASC_LOCALE_ALIASES = dict(_ASC_ALIASES)
+
+# Region defaults for languages whose ASC identifier carries a region. Used when
+# ASC's locale list can't be fetched (offline, no credentials). The API's own
+# list always wins when it's available.
+_ASC_REGION_DEFAULTS = {
+    "da": "da-DK",
+    "de": "de-DE",
+    "el": "el-GR",
+    "en": "en-US",
+    "es": "es-ES",
+    "fi": "fi-FI",
+    "fr": "fr-FR",
+    "he": "he-IL",
+    "hi": "hi-IN",
+    "hu": "hu-HU",
+    "id": "id-ID",
+    "nb": "nb-NO",
+    "nl": "nl-NL",
+    "pl": "pl-PL",
+    "ro": "ro-RO",
+    "ru": "ru-RU",
+    "sk": "sk-SK",
+    "sv": "sv-SE",
+    "th": "th-TH",
+    "tr": "tr-TR",
+    "uk": "uk-UA",
+    "vi": "vi-VN",
+}
+
+# Fallback when nothing can be discovered from disk.
 LOCALE_MAP = {
     "en":      "en-US",
     "de":      "de-DE",
@@ -59,8 +111,112 @@ LOCALE_MAP = {
     "es-ES":   "es-ES",
     "it":      "it",
     "ja":      "ja",
+    "ko":      "ko",
+    "pt-BR":   "pt-BR",
     "zh-Hans": "zh-Hans",
 }
+
+# Cached ASC locale list: local code → ASC identifier, as reported by the API.
+_ASC_LOCALE_INDEX = None
+
+
+def _load_asc_locale_index() -> dict:
+    """Fetch ASC's own list of app-store locales and index it by local code.
+
+    ASC returns identifiers like "de-DE", "fr-FR", "pt-BR", "zh-Hans", "it".
+    The "local code" is the part before the region ("de", "fr", "pt", "zh")
+    or the full identifier when there's no region ("it", "ja", "ko").
+    This lets an unusual locale resolve without being hardcoded here.
+
+    Failures are non-fatal: the static aliases still apply.
+    """
+    global _ASC_LOCALE_INDEX
+    if _ASC_LOCALE_INDEX is not None:
+        return _ASC_LOCALE_INDEX
+    index = {}
+    try:
+        data = _get("/appStoreLocales", {"limit": "200"})
+        for item in data.get("data", []):
+            asc = item["attributes"].get("locale") or ""
+            if not asc:
+                continue
+            index[asc] = asc
+            base = asc.split("-")[0]
+            index.setdefault(base, asc)
+            # zh-Hans is its own local code, not "zh"
+            if asc.startswith("zh-"):
+                index.setdefault(asc, asc)
+    except Exception:
+        pass
+    _ASC_LOCALE_INDEX = index
+    return index
+
+
+def _asc_locale_for(local: str) -> str:
+    """Map a local locale code to the ASC identifier for it.
+
+    Order: explicit aliases → ASC's own locale list → the region defaults
+    below → the code itself. The region defaults cover the common European
+    languages when the API isn't reachable.
+    """
+    if local in _ASC_LOCALE_ALIASES:
+        return _ASC_LOCALE_ALIASES[local]
+    index = _load_asc_locale_index()
+    if local in index:
+        return index[local]
+    if local in _ASC_REGION_DEFAULTS:
+        return _ASC_REGION_DEFAULTS[local]
+    return local
+
+
+def _discover_locales() -> dict:
+    """Build {local_locale: asc_locale} from what the project actually has.
+
+    Sources, in order of confidence:
+      1. i18n/<locale>.md files in META_DIR
+      2. metadata.md (the primary locale, always "en" → "en-US")
+      3. screenshot folders under SCREENSHOT_TEMPLATE's directory
+
+    A locale discovered from disk is mapped to the ASC identifier of the same
+    name, except for the aliases in _ASC_ALIASES. Locales that exist in the
+    fallback map but weren't found on disk are kept ONLY if the project has no
+    discoverable locales at all, so a project that genuinely ships fewer
+    languages doesn't get phantom ones pushed.
+    """
+    found = set()
+
+    # 1 + 2: metadata files
+    meta_dir = os.path.abspath(META_DIR)
+    if os.path.isdir(meta_dir):
+        if os.path.isfile(os.path.join(meta_dir, "metadata.md")):
+            found.add("en")
+        i18n_dir = os.path.join(meta_dir, "i18n")
+        if os.path.isdir(i18n_dir):
+            for name in os.listdir(i18n_dir):
+                if name.endswith(".md"):
+                    found.add(name[:-3])
+
+    # 3: screenshot folders (the directory part of SCREENSHOT_TEMPLATE)
+    try:
+        shots_root = os.path.abspath(SCREENSHOT_TEMPLATE).split("{locale}")[0]
+    except Exception:
+        shots_root = ""
+    if shots_root and os.path.isdir(shots_root):
+        for name in os.listdir(shots_root):
+            if os.path.isdir(os.path.join(shots_root, name)):
+                found.add(name)
+
+    if not found:
+        return dict(LOCALE_MAP)
+
+    return {loc: _asc_locale_for(loc) for loc in sorted(found)}
+
+
+def _refresh_locales() -> dict:
+    """Refresh LOCALE_MAP from disk. Call once at startup, before any push."""
+    global LOCALE_MAP
+    LOCALE_MAP = _discover_locales()
+    return LOCALE_MAP
 
 # Platform arg → (ASC platform string, MD section heading)
 # All platforms share one App ID — iOS/macOS/tvOS are versions under the same app record.
@@ -74,7 +230,7 @@ PLATFORM_CFG = {
 # image by add-captions.py, so each language needs its own files). This is the
 # single source of truth — generated app screenshots stay with the app project,
 # not duplicated under store-listings. The {locale} placeholder uses the LOCAL
-# codes (en, de, fr, es-ES, it, ja, zh-Hans). Override with ASC_SCREENSHOT_TEMPLATE.
+# codes (en, de, fr, es-ES, it, ja, ko, pt-BR, zh-Hans). Override with ASC_SCREENSHOT_TEMPLATE.
 SCREENSHOT_TEMPLATE = os.environ.get(
     "ASC_SCREENSHOT_TEMPLATE",
     os.path.join(os.getcwd(), "apple-native", "screenshots", "captioned", "{locale}"),
@@ -82,7 +238,11 @@ SCREENSHOT_TEMPLATE = os.environ.get(
 
 # Platform arg → list of (ASC screenshotDisplayType, filename glob).
 # Files are sorted by name, so the NN_ prefix controls display order.
-SCREENSHOT_CFG = {
+#
+# Override per platform with ASC_SCREENSHOT_GLOBS, e.g.
+#   ASC_SCREENSHOT_GLOBS='ios=APP_IPHONE_67:*.png;APP_IPAD_PRO_3GEN_129:*.png'
+# (semicolon-separated entries, each "DISPLAY_TYPE:glob"; use commas inside a glob).
+_SCREENSHOT_GLOBS_DEFAULT = {
     "ios": [
         ("APP_IPHONE_67",         "ios-iphone-pro-max_*.png"),
         ("APP_IPAD_PRO_3GEN_129", "ios-ipad-pro-13_*.png"),
@@ -94,6 +254,31 @@ SCREENSHOT_CFG = {
         ("APP_APPLE_TV", "tvos-4k_*.png"),
     ],
 }
+
+
+def _load_screenshot_cfg() -> dict:
+    """Screenshot globs, with optional per-project override via ASC_SCREENSHOT_GLOBS."""
+    cfg = {k: list(v) for k, v in _SCREENSHOT_GLOBS_DEFAULT.items()}
+    raw = os.environ.get("ASC_SCREENSHOT_GLOBS", "").strip()
+    if not raw:
+        return cfg
+    for platform_entry in raw.split(";"):
+        if "=" not in platform_entry:
+            continue
+        platform, _, specs = platform_entry.partition("=")
+        platform = platform.strip().lower()
+        pairs = []
+        for spec in specs.split(","):
+            if ":" not in spec:
+                continue
+            display_type, _, glob = spec.partition(":")
+            pairs.append((display_type.strip(), glob.strip()))
+        if pairs:
+            cfg[platform] = pairs
+    return cfg
+
+
+SCREENSHOT_CFG = _load_screenshot_cfg()
 
 # App-preview videos. Unlike screenshots these are locale-AGNOSTIC (no captions in
 # them), so ONE file per device is uploaded to EVERY locale, from a shared folder.
@@ -439,6 +624,18 @@ def check_auth() -> None:
         print(f"  ⚠ ASC_APP_ID ({app_id}) not in the app list above.")
         print(f"    It may exist on a different team, or the key has limited app access.")
 
+    print("\n── Locales discovered ──")
+    print(f"  ✓ {len(LOCALE_MAP)} locale(s): {', '.join(f'{k}→{v}' for k, v in LOCALE_MAP.items())}")
+    missing_md = [loc for loc in LOCALE_MAP if not os.path.isfile(
+        os.path.join(META_DIR, "metadata.md" if loc == "en" else os.path.join("i18n", f"{loc}.md")))]
+    if missing_md:
+        print(f"  ⚠ no metadata file for: {', '.join(missing_md)}")
+    else:
+        print("  ✓ every locale has a metadata file")
+    for display_type, pattern in SCREENSHOT_CFG.get("ios", []):
+        n = sum(len(_screenshot_files(loc, pattern)) for loc in LOCALE_MAP)
+        print(f"  · {display_type}: {n} file(s) match '{pattern}' across all locales")
+
     print("\n✓ Auth check passed. You're ready to push metadata.")
 
 
@@ -772,11 +969,44 @@ def push_app_info(locale_filter: str | None) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _resolve_locale_arg(locale_arg):
+    """Accept a local locale (it, en) or an ASC identifier (it, en-US) and
+    return the LOCAL locale key, or None if unknown.
+
+    Also accepts an ASC identifier whose region doesn't match the project's
+    folder, e.g. "nl-NL" when the project has "nl": the base language is
+    matched, so an ASC-side code resolves to the local folder.
+    """
+    if not locale_arg:
+        return None
+    if locale_arg in LOCALE_MAP:
+        return locale_arg
+    # ASC identifier → local key (en-US → en)
+    for local, asc in LOCALE_MAP.items():
+        if asc == locale_arg:
+            return local
+    # Region-qualified ASC code → base-language local key (nl-NL → nl).
+    # Skip script-qualified codes like zh-Hans: their base "zh" is a different
+    # language, and zh-Hans is its own local key.
+    if "-" in locale_arg:
+        base = locale_arg.split("-")[0]
+        for local in LOCALE_MAP:
+            if local == locale_arg or "-" in local:
+                continue
+            if local.split("-")[0] == base:
+                return local
+    return False
+
+
 def main():
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help"):
         print(__doc__)
         sys.exit(0)
+
+    # Discover the project's locales from disk before anything else, so a new
+    # language works without editing this file.
+    _refresh_locales()
 
     if args[0] == "--check":
         check_auth()
@@ -817,9 +1047,9 @@ def main():
             print("Usage: previews <platform|all> [locale]")
             sys.exit(1)
     elif args[0] == "appinfo":
-        locale_arg = args[1] if len(args) > 1 else None
-        if locale_arg and locale_arg not in LOCALE_MAP:
-            print(f"Unknown locale '{locale_arg}'. Known: {', '.join(LOCALE_MAP)}")
+        locale_arg = _resolve_locale_arg(args[1] if len(args) > 1 else None)
+        if locale_arg is False:
+            print(f"Unknown locale '{args[1]}'. Known: {', '.join(LOCALE_MAP)}")
             sys.exit(1)
         push_app_info(locale_arg)
         print("\nDone.")
@@ -837,10 +1067,9 @@ def main():
     args = kept
 
     platform_arg = args[0].lower()
-    locale_arg   = args[1] if len(args) > 1 else None
-
-    if locale_arg and locale_arg not in LOCALE_MAP:
-        print(f"Unknown locale '{locale_arg}'. Known: {', '.join(LOCALE_MAP)}")
+    locale_arg   = _resolve_locale_arg(args[1] if len(args) > 1 else None)
+    if locale_arg is False:
+        print(f"Unknown locale '{args[1]}'. Known: {', '.join(LOCALE_MAP)}")
         sys.exit(1)
 
     platforms = list(PLATFORM_CFG.keys()) if platform_arg == "all" else [platform_arg]

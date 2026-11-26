@@ -1,6 +1,6 @@
 ---
 name: app-store-connect
-description: Use when pushing App Store metadata, descriptions, keywords, promotional text, what's new, subtitle, privacy policy, or screenshots to App Store Connect for Clocks in Motion. Triggers on "push metadata", "update App Store", "upload metadata", "upload screenshots", "ASC API", "App Store Connect".
+description: Use when pushing App Store metadata, descriptions, keywords, promotional text, what's new, subtitle, privacy policy, or screenshots to App Store Connect for any app. Triggers on "push metadata", "update App Store", "upload metadata", "upload screenshots", "ASC API", "App Store Connect".
 ---
 
 # App Store Connect — Metadata & Screenshot Push
@@ -9,7 +9,11 @@ description: Use when pushing App Store metadata, descriptions, keywords, promot
 
 Pushes localized metadata (from `store-listings/apple-app-store/`) and localized
 screenshots (from `apple-native/screenshots/captioned/<locale>/`) to App Store
-Connect via the REST API. Covers iOS, macOS, and tvOS; all 7 locales.
+Connect via the REST API. Covers iOS, macOS, and tvOS.
+
+**The locale set is discovered from the project, not hardcoded.** Add a language by
+adding `i18n/<locale>.md` and a screenshot folder — no code change needed. See
+"Adding a language" below.
 
 - Script:  `~/.claude/skills/app-store-connect/push-metadata.py`
 - Wrapper: `~/.claude/skills/app-store-connect/push-metadata.sh` (runs the script in the skill's venv)
@@ -81,6 +85,21 @@ export ASC_APP_ID="1493995311"
 
 Source it before every run: `source .env.asc && …` (examples below do this).
 
+### Step 4b — Point the skill at the project's layout (optional)
+
+The defaults assume `store-listings/apple-app-store/` and
+`apple-native/screenshots/captioned/`. Override if the project differs:
+
+```bash
+export ASC_META_DIR="store-listings/apple-app-store"          # where metadata.md + i18n/*.md live
+export ASC_SCREENSHOT_TEMPLATE="$PWD/apple-native/screenshots/captioned/{locale}"
+export ASC_SCREENSHOT_GLOBS='ios=APP_IPHONE_67:*.png;APP_IPAD_PRO_3GEN_129:*.png'
+```
+
+`ASC_SCREENSHOT_GLOBS` is `platform=DISPLAY_TYPE:glob;DISPLAY_TYPE:glob`. Use it
+when the project's screenshot filenames differ from the defaults
+(`ios-iphone-pro-max_*.png`, `ios-ipad-pro-13_*.png`).
+
 ---
 
 ### Step 5 — Verify auth before pushing
@@ -94,6 +113,7 @@ source .env.asc && ~/.claude/skills/app-store-connect/push-metadata.sh --check
 
 It validates: the 4 env vars are set → the `.p8` exists and is a valid PEM →
 a JWT can be signed → the live API accepts it → `ASC_APP_ID` is visible to the key.
+It also prints the locales it discovered.
 
 ```
 ── Environment variables ──
@@ -234,7 +254,15 @@ awaits a new version to run against.
    (see below).
 
 9. **Python env:** never `pip install` globally (PEP 668). Use the skill venv; the
-   `.sh` wrapper enforces it.
+   `.sh` wrapper enforces it. **The script needs Python 3.10+** — it uses `X | None`
+   type syntax, which fails on the macOS system Python 3.9 with
+   `TypeError: unsupported operand type(s) for |`. If the venv was made with 3.9,
+   recreate it with a newer interpreter:
+   ```bash
+   rm -rf ~/.claude/skills/app-store-connect/.venv
+   /opt/homebrew/bin/python3.13 -m venv ~/.claude/skills/app-store-connect/.venv
+   ~/.claude/skills/app-store-connect/.venv/bin/pip install PyJWT requests cryptography
+   ```
 
 10. **A fresh version starts with only the primary locale (en-US).** A text push
     auto-creates the missing version localizations before setting their fields, so
@@ -245,6 +273,24 @@ awaits a new version to run against.
     a flaky `500/503`; every request (incl. the CDN `PUT`) retries with exponential
     backoff via `_request`. A run that still fails after retries changes nothing new
     on re-run (screenshots use replace semantics) — just re-run.
+
+12. **A CDN `PUT` can fail with `400 Invalid request` even though the reserve
+    succeeded.** The signed upload URL is single-use and expires. Re-reserve and
+    upload again rather than reusing the URL.
+
+13. **The locale set comes from disk.** If a language is missing from a push,
+    check that its `i18n/<locale>.md` file and screenshot folder exist — the
+    script no longer carries a hardcoded locale list, so a missing language is a
+    missing file, not a missing mapping.
+
+14. **This skill is a custom agent skill, and projects may mirror it.** Ez Bill
+    keeps a copy at `tools/app-store-connect/` so the repo stays compatible
+    without the skill installed. After changing the skill, sync the mirror:
+
+    ```bash
+    python3 scripts/sync_asc_skill.py --copy   # update the repo copy
+    python3 scripts/sync_asc_skill.py --check  # verify they match (CI gate)
+    ```
 
 ---
 
@@ -287,11 +333,39 @@ there isn't one, or if the AppInfo is locked.
 `store-listings/apple-app-store/i18n/<locale>.md`. Subtitle + privacy come from the
 `## Common` section of each file.
 
-**Locale codes** (local → ASC):
+**Locale codes** (local → ASC) are **discovered at runtime**, not fixed. The script
+reads the locale list from ASC's own `/appStoreLocales` endpoint and matches the
+project's files against it, with a small static fallback for the common cases:
 
-| en | de | fr | es-ES | it | ja | zh-Hans |
-|---|---|---|---|---|---|---|
-| en-US | de-DE | fr-FR | es-ES | **it** | ja | zh-Hans |
+| local | ASC | note |
+|---|---|---|
+| en | en-US | the primary locale; its file is `metadata.md` |
+| it | it | **not** `it-IT` — ASC rejects it-IT |
+| de | de-DE | |
+| fr | fr-FR | |
+| es-ES | es-ES | |
+| pt-BR | pt-BR | |
+| ja | ja | |
+| ko | ko | |
+| zh-Hans | zh-Hans | |
+
+Anything else follows the same pattern: the local code is looked up in ASC's locale
+list, and its region-qualified identifier is used (`nl` → `nl-NL`, `pl` → `pl-PL`,
+`sv` → `sv-SE`). If a local code isn't in ASC's list, the code is used as-is and
+ASC will reject it with a clear error.
+
+### Adding a language
+
+No code change needed. For locale `nl`:
+
+1. Write `store-listings/apple-app-store/i18n/nl.md` with a `## Common` section
+   (subtitle, privacy policy text, marketing URL, support URL) and an
+   `## iOS & iPadOS` section (description, keywords, promotional text, what's new).
+2. Add screenshots in `apple-native/screenshots/captioned/nl/`, named to match the
+   configured globs (`ios-iphone-pro-max_*.png`, `ios-ipad-pro-13_*.png`).
+3. Run the push. The script discovers `nl` from disk and pushes it.
+
+The version localization is created automatically if the version doesn't have it yet.
 
 ---
 

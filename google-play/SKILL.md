@@ -1,6 +1,6 @@
 ---
 name: google-play
-description: Use when pushing Google Play store-listing metadata (app name, short/full description) or screenshots/artwork to the Play Console for Clocks in Motion. Triggers on "push play metadata", "update Play Store listing", "upload play screenshots", "Google Play API", "androidpublisher".
+description: Use when pushing Google Play store-listing metadata (app name, short/full description) or screenshots/artwork to the Play Console for any app. Triggers on "push play metadata", "update Play Store listing", "upload play screenshots", "Google Play API", "androidpublisher".
 ---
 
 # Google Play — Store Listing Push
@@ -13,6 +13,10 @@ the `androidpublisher` v3 API.
 
 - Script:  `~/.claude/skills/google-play/push-play.py`
 - Wrapper: `~/.claude/skills/google-play/push-play.sh` (runs it in the skill venv)
+
+**The locale set is discovered from the project, not hardcoded.** Add a language by
+adding `i18n/<locale>.md` and a screenshot folder — no code change needed. See
+"Locale mapping" below.
 
 **Scope boundary:** this skill touches the *store listing only*. The AAB and
 **release notes** are owned by CI (`android-native.yml` publishes the google-flavor
@@ -128,20 +132,47 @@ API-settable), and any App content declaration.
 
 ---
 
-## Locale mapping (three naming schemes bridged in `LOCALES`)
+## Locale mapping (discovered from disk, not hardcoded)
 
-| Play listing | Metadata file | Screenshot dir |
+The locale set is **discovered from the project's files**, so adding a language
+needs no code change. Three naming schemes meet here:
+
+| | What it is | Example |
 |---|---|---|
-| en-US | `metadata.md` | `en` |
-| de-DE | `i18n/de.md` | `de` |
-| fr-FR | `i18n/fr.md` | `fr` |
-| es-ES | `i18n/es-ES.md` | `es-ES` |
-| it-IT | `i18n/it.md` | `it` |
-| ja-JP | `i18n/ja.md` | `ja` |
-| **zh-CN** | `i18n/zh-CN.md` | **`zh-Hans`** |
+| **Play listing language** | what the API wants | `en-US`, `it-IT`, `zh-CN` |
+| **Metadata file** | `store-listings/google-play/i18n/<local>.md` | `i18n/it.md` |
+| **Screenshot dir** | `android-native/screenshots/captioned/<local>/` | `captioned/it/` |
 
-Note the Simplified-Chinese mismatch: the listing is `zh-CN`, the metadata file is
-`zh-CN.md`, but the Android pipeline emits a `zh-Hans` screenshot folder.
+Discovery reads the metadata files and the screenshot folders, then maps each
+local code to a Play language. The mapping comes from Play's own existing
+listing languages when credentials are available, with a small static fallback
+for the common cases:
+
+| local | Play | note |
+|---|---|---|
+| en | en-US | the primary locale; its file is `metadata.md` |
+| it | it-IT | |
+| ja | ja-JP | |
+| zh-Hans | zh-CN | the screenshot pipeline emits `zh-Hans`, Play wants `zh-CN` |
+| de, fr, es-ES | de-DE, fr-FR, es-ES | same code, region added |
+
+Anything else follows the same pattern: the local code is looked up in Play's
+listing languages, and its region-qualified identifier is used (`nl` → `nl-NL`,
+`sv` → `sv-SE`). If a local code isn't in Play's list, the code is used as-is
+and Play rejects it with a clear error.
+
+### Adding a language
+
+No code change needed. For locale `nl`:
+
+1. Write `store-listings/google-play/i18n/nl.md` with `### App name`,
+   `### Short description` and `### Full description` sections.
+2. Add screenshots in `android-native/screenshots/captioned/nl/`, named to match
+   the configured globs (`phone_*.png`, `tablet_*.png`, `tv_*.png`).
+3. Run the push. The script discovers `nl` from disk and pushes it.
+
+The locale argument accepts both forms — `it-IT` (the Play language) or `it`
+(the local code). Unknown locales are rejected, not silently ignored.
 
 ---
 
@@ -155,11 +186,16 @@ Note the Simplified-Chinese mismatch: the listing is `zh-CN`, the metadata file 
    explicitly to the service account.
 3. **Managed Publishing** is the human gate (see above); without it, `--commit` is live.
 4. **Locale codes carry regions** (`it-IT`, `ja-JP`) and Simplified Chinese is `zh-CN`.
+   The local code (`it`, `zh-Hans`) differs from the Play language — the script
+   bridges the two. The locale set itself comes from disk, not a hardcoded list.
 5. Never `pip install` globally (PEP 668) — use the venv; the `.sh` wrapper enforces it.
 6. **Image uploads transiently `500`.** Pushing ~126 images per full run makes a
    flaky `500 Internal error` likely; every API call uses `.execute(num_retries=5)`
    (exponential backoff) so a single blip self-heals. A run that still fails after
    retries discards its edit — just re-run.
+7. **A language missing from a push means a missing file.** The script has no
+   hardcoded locale list, so if a language isn't pushed, check that its
+   `i18n/<locale>.md` file and screenshot folder exist.
 
 ---
 

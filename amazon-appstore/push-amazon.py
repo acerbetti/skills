@@ -76,13 +76,37 @@ SCREENSHOT_TEMPLATE = os.environ.get(
     os.path.join(os.getcwd(), "android-native", "screenshots", "captioned", "{sdir}"),
 )
 
-# (Amazon listing language, metadata file relative to META_DIR, screenshot dir code)
-# Amazon listing codes carry a region like Play (en-US, de-DE, ...). Verified live
-# against this app: en-US/de-DE/fr-FR/es-ES/it-IT/ja-JP are available. Simplified
-# Chinese is NOT — the API rejects every code tried (zh-Hans, zh-CN, zh, cmn-Hans,
-# zh-Hans-CN) with 400 "Invalid language", and ko-KR is likewise unavailable. So the
-# repo's zh-Hans.md has no Amazon target and is intentionally omitted here. If Amazon
-# later offers Chinese for this app, re-add it with the code a live GET accepts.
+# ---------------------------------------------------------------------------
+# Locales
+# ---------------------------------------------------------------------------
+#
+# The locale set is DISCOVERED from the project's own files, not hardcoded, so
+# adding a language needs no change here. See _discover_locales() below.
+#
+# Three naming schemes meet here:
+#   * Amazon listing language — region-qualified: en-US, it-IT, ja-JP
+#   * metadata file name      — the skill's local code: en, it, ja
+#   * screenshot folder       — the skill's local code (same as the file name)
+#
+# _AMAZON_LOCALE_ALIASES holds the cases where Amazon's language differs from
+# the local code. Everything else is derived from the local code by
+# _amazon_locale_for(), which asks Amazon's own listing endpoint when
+# credentials are available and falls back to the region defaults otherwise.
+#
+# Note: Amazon's supported languages differ per app and can change. A language
+# Amazon rejects comes back as 400 "Invalid language" — that is the authority,
+# not this table.
+
+# local code → Amazon listing language, where they differ.
+_AMAZON_LOCALE_ALIASES = {
+    "en": "en-US",
+    "it": "it-IT",
+    "ja": "ja-JP",
+    "zh-Hans": "zh-CN",
+    "zh-Hant": "zh-TW",
+}
+
+# Fallback when nothing can be discovered from disk.
 LOCALES = [
     ("en-US", "metadata.md",   "en"),
     ("de-DE", "i18n/de.md",    "de"),
@@ -91,6 +115,140 @@ LOCALES = [
     ("it-IT", "i18n/it.md",    "it"),
     ("ja-JP", "i18n/ja.md",    "ja"),
 ]
+
+# local code → Amazon language, used when Amazon's own list isn't reachable.
+_AMAZON_REGION_DEFAULTS = {
+    "en": "en-US", "de": "de-DE", "fr": "fr-FR", "es": "es-ES", "it": "it-IT",
+    "ja": "ja-JP", "ko": "ko-KR", "pt": "pt-BR", "ru": "ru-RU", "zh": "zh-CN",
+    "nl": "nl-NL", "pl": "pl-PL", "tr": "tr-TR", "da": "da-DK", "sv": "sv-SE",
+    "no": "no-NO", "fi": "fi-FI", "el": "el-GR", "hu": "hu-HU", "ro": "ro-RO",
+    "uk": "uk-UA", "vi": "vi-VN", "th": "th-TH", "id": "id-ID", "cs": "cs-CZ",
+    "sk": "sk-SK", "he": "he-IL", "hi": "hi-IN", "ar": "ar", "ca": "ca-ES",
+}
+
+# Cached Amazon listing-language index: local code → Amazon language.
+_AMAZON_LOCALE_INDEX = None
+
+# The languages probed against the app when an edit is open. Amazon's available
+# set is per-app, so this is a probe list, not an allowlist — anything the app
+# accepts is usable.
+_CANDIDATE_LANGUAGES = [
+    "en-US", "de-DE", "fr-FR", "es-ES", "it-IT", "ja-JP", "ko-KR", "pt-BR",
+    "nl-NL", "pl-PL", "ru-RU", "tr-TR", "da-DK", "sv-SE", "no-NO", "fi-FI",
+    "el-GR", "hu-HU", "ro-RO", "uk-UA", "vi-VN", "th-TH", "id-ID", "cs-CZ",
+    "sk-SK", "he-IL", "hi-IN", "ar", "ca-ES", "zh-CN", "zh-TW",
+]
+
+
+def _amazon_locale_index() -> dict:
+    """Probe which listing languages the app accepts, and index them by local code.
+
+    Amazon's API has no "list all languages" endpoint — a listing is fetched per
+    language (`/edits/{id}/listings/{lang}`) and a language the app isn't offered
+    comes back as 400 "Invalid language". So the index is built by probing the
+    candidate languages.
+
+    Probing needs an open edit, and opening one is a server write, so this only
+    probes when an edit already exists. Otherwise the static aliases and region
+    defaults decide, and Amazon's own 400 "Invalid language" is the authority
+    when a language is pushed.
+
+    Failures are non-fatal: the static aliases and region defaults still apply.
+    """
+    global _AMAZON_LOCALE_INDEX
+    if _AMAZON_LOCALE_INDEX is not None:
+        return _AMAZON_LOCALE_INDEX
+    index = {}
+    try:
+        eid, _ = _active_edit()
+        if eid:
+            for lang in _CANDIDATE_LANGUAGES:
+                try:
+                    _api("GET", f"/edits/{eid}/listings/{lang}")
+                except SystemExit:
+                    continue  # 400 Invalid language — this app isn't offered it
+                index[lang] = lang
+                index.setdefault(lang.split("-")[0], lang)
+    except Exception:
+        pass
+    _AMAZON_LOCALE_INDEX = index
+    return index
+
+
+def _amazon_locale_for(local: str) -> str:
+    """Map a local code to the Amazon listing language for it."""
+    if local in _AMAZON_LOCALE_ALIASES:
+        return _AMAZON_LOCALE_ALIASES[local]
+    index = _amazon_locale_index()
+    if local in index:
+        return index[local]
+    if local in _AMAZON_REGION_DEFAULTS:
+        return _AMAZON_REGION_DEFAULTS[local]
+    return local
+
+
+def _discover_locales() -> list:
+    """Build the (lang, md_rel, sdir) table from what the project has.
+
+    Sources, in order of confidence:
+      1. i18n/<local>.md files in META_DIR
+      2. metadata.md (the primary locale)
+      3. screenshot folders under SCREENSHOT_TEMPLATE's directory
+
+    The local code is the file name without .md; the primary locale's file is
+    metadata.md, so its local code is "en".
+    """
+    found = set()
+
+    meta_dir = os.path.abspath(META_DIR)
+    if os.path.isdir(meta_dir):
+        if os.path.isfile(os.path.join(meta_dir, "metadata.md")):
+            found.add("en")
+        i18n_dir = os.path.join(meta_dir, "i18n")
+        if os.path.isdir(i18n_dir):
+            for name in os.listdir(i18n_dir):
+                if name.endswith(".md"):
+                    found.add(name[:-3])
+
+    try:
+        shots_root = os.path.abspath(SCREENSHOT_TEMPLATE).split("{sdir}")[0]
+    except Exception:
+        shots_root = ""
+    if shots_root and os.path.isdir(shots_root):
+        for name in os.listdir(shots_root):
+            if os.path.isdir(os.path.join(shots_root, name)):
+                found.add(name)
+
+    if not found:
+        return list(LOCALES)
+
+    table = []
+    for local in sorted(found):
+        md_rel = "metadata.md" if local == "en" else f"i18n/{local}.md"
+        table.append((_amazon_locale_for(local), md_rel, local))
+    return table
+
+
+def _refresh_locales() -> list:
+    """Refresh the locale table from disk. Call once at startup, before any push."""
+    global LOCALES
+    LOCALES = _discover_locales()
+    return LOCALES
+
+
+def _resolve_locale_arg(locale_arg):
+    """Accept a local code (it, zh-Hans) or an Amazon language (it-IT, zh-CN)
+    and return the AMAZON language, or None if unknown."""
+    if not locale_arg:
+        return None
+    known = {lang for lang, _, _ in LOCALES}
+    if locale_arg in known:
+        return locale_arg
+    # local code → Amazon language (it → it-IT, zh-Hans → zh-CN)
+    for lang, _, sdir in LOCALES:
+        if sdir == locale_arg:
+            return lang
+    return False
 
 # MD heading prefix → Amazon listing field. Amazon supports two fields Play does not:
 # featureBullets (array) and keywords (array). recentChanges is the per-language
@@ -450,6 +608,18 @@ def check():
     eid, _ = _active_edit()
     print(f"  ✓ reached app {_app_id()}")
     print(f"    active edit: {eid or '(none)'}")
+    _refresh_locales()
+    print("\n── Locales discovered ──")
+    print(f"  ✓ {len(LOCALES)} locale(s): {', '.join(f'{sdir}→{lang}' for lang, _, sdir in LOCALES)}")
+    missing_md = [sdir for _, md_rel, sdir in LOCALES
+                  if not os.path.isfile(os.path.join(META_DIR, md_rel))]
+    if missing_md:
+        print(f"  ⚠ no metadata file for: {', '.join(missing_md)}")
+    else:
+        print("  ✓ every locale has a metadata file")
+    for image_type, pattern in SCREENSHOT_TYPES:
+        n = sum(len(_screenshot_files(sdir, pattern)) for _, _, sdir in LOCALES)
+        print(f"  · {image_type}: {n} file(s) match '{pattern}' across all locales")
     print("\n✓ Auth + app access OK. Dry-run by default; --commit submits for review.")
 
 # ---------------------------------------------------------------------------
@@ -477,10 +647,15 @@ def main():
     cmd = args[0]
     if cmd not in ("text", "screenshots", "assets", "video", "all", "listing"):
         sys.exit(f"Unknown command '{cmd}'. Use: text, screenshots, assets, video, listing, all")
-    locale = args[1] if len(args) > 1 else None
-    valid = {l for l, _, _ in LOCALES}
-    if locale and locale not in valid:
-        sys.exit(f"Unknown locale '{locale}'. Known: {', '.join(sorted(valid))}")
+    # Discover the project's locales from disk before anything else, so a new
+    # language works without editing this file.
+    _refresh_locales()
+    locale = _resolve_locale_arg(args[1] if len(args) > 1 else None)
+    if locale is False:
+        sys.exit(
+            f"Unknown locale '{args[1]}'. "
+            f"Known: {', '.join(sorted(l for l, _, _ in LOCALES))}"
+        )
 
     if not (do_commit or do_stage):
         preview(cmd, locale)
